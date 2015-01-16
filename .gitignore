@@ -1,5 +1,7 @@
 # certauth
 
+*.crt
+*.key
 certs.db
 
 ### https://raw.github.com/github/gitignore/master/python.gitignore
