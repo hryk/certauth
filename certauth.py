@@ -8,11 +8,7 @@ import random
 import sqlite3
 import struct
 
-import bottle
-from bottle import Bottle, static_file, abort
-from bottle_sqlite import Plugin as SQLitePlugin
-
-from flask import Flask, url_for, request, make_response, render_template, redirect
+from flask import Flask, url_for, request, make_response, render_template, redirect, abort
 from flask.ext.sqlalchemy import SQLAlchemy
 
 # Settings
@@ -167,17 +163,6 @@ def authenticate(db):
         abort(401)
     return to_json(auth_info)
 
-
-if bottle.DEBUG:
-    @app.route("/debug", methods=["GET"])
-    def debug_info():
-        response.content_type = "text/plain"
-        ret = []
-        for k in sorted(request.environ.keys()):
-            ret.append("%s=%r" % (k, request.environ[k]))
-        headers = "\n\t".join(map(lambda x: "%s=%r" % (x, request.headers.raw(x)), request.headers))
-        ret.append("Headers: \n\t%s" % headers)
-        return "\n".join(ret)
 
 if __name__ == '__main__':
     sqlite = sqlite3.connect(DBNAME)

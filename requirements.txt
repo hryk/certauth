@@ -1,6 +1,5 @@
-bottle==0.12.8
-bottle-sqlite==0.1.2
 Flask==0.10.1
+Flask-SQLAlchemy==2.0
 greenlet==0.4.5
 gunicorn==19.1.1
 itsdangerous==0.24
@@ -11,4 +10,5 @@ meinheld==0.5.7
 pep8==1.5.7
 pyasn1==0.1.7
 pyspkac==0.7
+SQLAlchemy==0.9.8
 Werkzeug==0.9.6
