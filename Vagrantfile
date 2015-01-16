@@ -66,7 +66,7 @@ Vagrant.configure(2) do |config|
   # documentation for more information about their specific syntax and use.
   config.vm.provision "shell", inline: <<-SHELL
     sudo apt-get update
-    sudo apt-get -y install build-essential python-pip
+    sudo apt-get -y install build-essential python-pip swig python-dev sqlite3 curl
     sudo pip install virtualenv
   SHELL
 end
