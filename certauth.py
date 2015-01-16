@@ -8,7 +8,8 @@ import random
 import sqlite3
 import struct
 
-from flask import Flask, url_for, request, make_response, render_template, redirect, abort
+from flask import (Flask, url_for, request, make_response,
+                   render_template, redirect, abort)
 from flask.ext.sqlalchemy import SQLAlchemy
 
 # Settings
@@ -35,16 +36,15 @@ def to_json(*args, **kwargs):
     return json.dumps(ret)
 
 
-def get_current_auth(db):
+def get_current_auth(db, req):
     try:
-        ssl_serial = request.environ["SSL_SERIAL"].decode("hex")
+        ssl_serial = req.environ["SSL_SERIAL"].decode("hex")
         cert_serial = struct.unpack(">I", ssl_serial)[0]
     except:
         return None
-    cursor = db.cursor()
-    cursor.execute("select uname,resource from user_certs where cert_serial=?",
-                   (cert_serial,))
-    row = cursor.fetchone()
+    result = db.engine.execute("select uname,resource from user_certs where cert_serial=?",
+                               (cert_serial,))
+    row = result.fetchone()
     if row is None:
         raise KeyError("No cert with serial %r" % (cert_serial,))
     return dict(row)
@@ -156,12 +156,12 @@ def authorize(req_id):
 
 
 @app.route("/auth", methods=["GET"])
-def authenticate(db):
-    response.content_type = "application/json"
-    auth_info = get_current_auth(db)
+def authenticate():
+    auth_info = get_current_auth(db, request)
     if auth_info is None:
         abort(401)
-    return to_json(auth_info)
+    return make_response(to_json(auth_info),
+                         content_type="application/json")
 
 
 if __name__ == '__main__':
