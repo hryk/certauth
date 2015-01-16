@@ -1,0 +1,4 @@
+bottle==0.12.8
+M2Crypto==0.22.3
+pyasn1==0.1.7
+pyspkac==0.7
