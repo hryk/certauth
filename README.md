@@ -33,6 +33,12 @@ $ openssl req -x509 -new -nodes -key ca.key -days 1024 -out ca.crt
 (env)$ python certauth.py --server
 ```
 
+To use gunicorn or other wsgi servers,
+
+```
+(env)$ gunicorn certauth:app
+```
+
 ### Request certification
 
 ### Sign certification
