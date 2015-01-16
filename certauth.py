@@ -1,20 +1,18 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 
 import os
 import sys
-
-my_dir = os.path.dirname(__file__)
-sys.path.append(os.path.join(my_dir, "lib"))
-
-from bottle_sqlite import Plugin as SQLitePlugin
-
-from flask import Flask
 import json
 import time
 import random
 import sqlite3
 import struct
 
+import bottle
+from bottle import Bottle, redirect, request, response, static_file, abort
+from bottle_sqlite import Plugin as SQLitePlugin
+
+my_dir = os.environ.get("PWD")
 DBNAME = os.environ.get("CERT_DB", os.path.join(my_dir, "certs.db"))
 CA_CRT = os.environ.get("CA_CRT", os.path.join(my_dir, "ca.crt"))
 CA_KEY = os.environ.get("CA_KEY", os.path.join(my_dir, "ca.key"))
@@ -73,8 +71,9 @@ def get_cert(db, req_id):
     cur = db.cursor()
     cur.execute("select cert from certs where cert_serial=(select cert_serial from requests where req_id=?)",
                 (req_id,))
+    cert = cur.fetchone()[0].rstrip()
     response.content_type = "application/x-x509-user-cert"
-    return cur.fetchone()[0]
+    return cert
 
 
 @app.get("/ca.crt")
