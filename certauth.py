@@ -9,22 +9,26 @@ import sqlite3
 import struct
 
 import bottle
-from bottle import Bottle, redirect, request, response, static_file, abort
+from bottle import Bottle, static_file, abort
 from bottle_sqlite import Plugin as SQLitePlugin
+
+from flask import Flask, url_for, request, make_response, render_template, redirect
+from flask.ext.sqlalchemy import SQLAlchemy
+
+# Settings
 
 my_dir = os.environ.get("PWD")
 DBNAME = os.environ.get("CERT_DB", os.path.join(my_dir, "certs.db"))
 CA_CRT = os.environ.get("CA_CRT", os.path.join(my_dir, "ca.crt"))
 CA_KEY = os.environ.get("CA_KEY", os.path.join(my_dir, "ca.key"))
 
-if os.environ.get("DEBUG"):
-    bottle.debug(True)
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = ('sqlite:///%s' % DBNAME)
+db = SQLAlchemy(app)
+app.debug = True
 
-app = Bottle()
-app.install(SQLitePlugin(dbfile=DBNAME))
 
-app.get("/new", name="new")(lambda: static_file("new.html", my_dir))
-app.get("/new.js")(lambda: static_file("new.js", my_dir))
+# Functions
 
 
 def to_json(*args, **kwargs):
@@ -33,67 +37,6 @@ def to_json(*args, **kwargs):
     else:
         ret = dict(*args, **kwargs)
     return json.dumps(ret)
-
-
-@app.get("/req")
-def get_requests(db):
-    response.content_type = "application/json"
-    req_id = request.get_cookie("req_id")
-    if not req_id:
-        return to_json([])
-    cur = db.cursor()
-    cur.execute("select req_id,cert_serial is not null as have_cert,uname,resource,request_info from requests where req_id=?", (req_id,))
-    ret = map(lambda row: dict(map(lambda (i, d): (d[0], json.loads(row[i]) if d[0] == "request_info" else row[i]), enumerate(cur.description))), cur)
-    return to_json(ret)
-
-
-@app.post("/new")
-def new_key(db):
-    spkac = request.POST["spkac"]
-    uname = request.POST["uname"]
-    resource = request.POST["resource"]
-    req_id = "".join(map(lambda x: "%02x" % random.randint(0, 255), range(4)))
-    cur = db.cursor()
-    req_info = dict(
-        headers=dict(request.headers),
-        remote_addr=request.environ["REMOTE_ADDR"],
-        remote_port=int(request.environ.get("REMOTE_PORT", -1)),
-        timestamp=time.time(),
-        remote_user=request.environ.get("REMOTE_USER"))
-    cur.execute("insert into requests(req_id, spkac, uname, resource, request_info) values (?,?,?,?,?)",
-                (req_id, spkac, uname, resource, to_json(req_info)))
-    response.set_cookie("req_id", req_id)
-    return redirect(app.get_url("new"))
-
-
-@app.get("/cert/<req_id>")
-def get_cert(db, req_id):
-    cur = db.cursor()
-    cur.execute("select cert from certs where cert_serial=(select cert_serial from requests where req_id=?)",
-                (req_id,))
-    cert = cur.fetchone()[0].rstrip()
-    response.content_type = "application/x-x509-user-cert"
-    return cert
-
-
-@app.get("/ca.crt")
-def get_ca():
-    response.content_type = "application/x-x509-ca-cert"
-    return open(CA_CRT).read()
-
-
-@app.post("/authorize/<req_id>")
-def authorize(req_id):
-    abort(500, "Not implemented yet")
-
-
-@app.get("/auth")
-def authenticate(db):
-    response.content_type = "application/json"
-    auth_info = get_current_auth(db)
-    if auth_info is None:
-        abort(401)
-    return to_json(auth_info)
 
 
 def get_current_auth(db):
@@ -110,13 +53,6 @@ def get_current_auth(db):
         raise KeyError("No cert with serial %r" % (cert_serial,))
     return dict(row)
 
-sql_existing = """
-  select spkac,uname,resource,
-    (select uname from users where users.uname=requests.uname) as existing_user,
-    (select cert_serial from certs where certs.cert_serial=requests.cert_serial) as cert_serial
-  from requests where req_id=?
-"""
-
 
 def sign_request(db, req_id, *dn_args):
     from pyspkac.spkac import SPKAC
@@ -126,6 +62,12 @@ def sign_request(db, req_id, *dn_args):
         X509.new_extension('keyUsage', 'digitalSignature, keyEncipherment', critical=True),
         X509.new_extension('extendedKeyUsage', 'clientAuth'),
     ]
+    sql_existing = """
+      select spkac,uname,resource,
+        (select uname from users where users.uname=requests.uname) as existing_user,
+        (select cert_serial from certs where certs.cert_serial=requests.cert_serial) as cert_serial
+      from requests where req_id=?
+    """
     cursor = db.cursor()
     cursor.execute(sql_existing, (req_id,))
     row = cursor.fetchone()
@@ -154,8 +96,80 @@ def sign_request(db, req_id, *dn_args):
     db.commit()
     return True
 
+
+# Routes
+
+
+@app.route("/new", methods=["GET"])
+def new_cert():
+    return render_template('new.html')
+
+
+@app.route("/new", methods=["POST"])
+def new_key():
+    spkac = request.form["spkac"]
+    uname = request.form["uname"]
+    resource = request.form["resource"]
+    req_id = "".join(map(lambda x: "%02x" % random.randint(0, 255), range(4)))
+    req_info = dict(
+        headers=dict(request.headers),
+        remote_addr=request.environ["REMOTE_ADDR"],
+        remote_port=int(request.environ.get("REMOTE_PORT", -1)),
+        timestamp=time.time(),
+        remote_user=request.environ.get("REMOTE_USER")
+        )
+    db.engine.execute("insert into requests(req_id, spkac, uname, resource, request_info) values (?,?,?,?,?)",
+                      (req_id, spkac, uname, resource, to_json(req_info)))
+    response = make_response(redirect(url_for("new_cert")))
+    response.set_cookie("req_id", req_id)
+    return response
+
+
+@app.route("/req", methods=["GET"])
+def get_requests():
+    req_id = request.cookies.get("req_id")
+    if not req_id:
+        return to_json([])
+    result = db.engine.execute("select req_id,cert_serial is not null as have_cert,uname,resource,request_info from requests where req_id=?", (req_id,))
+    ret = map(lambda row: dict(zip(row.keys(), row), request_info=json.loads(row["request_info"])),
+              result.fetchall())
+    response = make_response(to_json(ret))
+    response.headers['Content-Type'] = "application/json"
+    return response
+
+
+@app.route("/cert/<req_id>", methods=["GET"])
+def get_cert(req_id):
+    result = db.engine.execute("select cert from certs where cert_serial=(select cert_serial from requests where req_id=?)",
+                               (req_id,))
+    cert = result.fetchone()[0].rstrip()
+    response = make_response(cert)
+    response.content_type = "application/x-x509-user-cert"
+    return response
+
+
+@app.route("/ca.crt", methods=["GET"])
+def get_ca():
+    response.content_type = "application/x-x509-ca-cert"
+    return open(CA_CRT).read()
+
+
+@app.route("/authorize/<req_id>", methods=["POST"])
+def authorize(req_id):
+    abort(500, "Not implemented yet")
+
+
+@app.route("/auth", methods=["GET"])
+def authenticate(db):
+    response.content_type = "application/json"
+    auth_info = get_current_auth(db)
+    if auth_info is None:
+        abort(401)
+    return to_json(auth_info)
+
+
 if bottle.DEBUG:
-    @app.get("/debug")
+    @app.route("/debug", methods=["GET"])
     def debug_info():
         response.content_type = "text/plain"
         ret = []
@@ -166,7 +180,7 @@ if bottle.DEBUG:
         return "\n".join(ret)
 
 if __name__ == '__main__':
-    db = sqlite3.connect(DBNAME)
+    sqlite = sqlite3.connect(DBNAME)
     try:
         req_id = sys.argv[1]
     except IndexError:
@@ -174,7 +188,7 @@ if __name__ == '__main__':
 Usage: %(arg0)s <req_id> [<dnval=x1> ..]
  OR    %(arg0)s --server [<ip>][:<port>]
 """ % {"arg0": os.path.basename(sys.argv[0])}
-        cursor = db.cursor()
+        cursor = sqlite.cursor()
         first = "Currently unsigned requests:"
         try:
             cursor.execute("select req_id,uname,resource from requests where cert_serial is null")
@@ -204,4 +218,4 @@ Usage: %(arg0)s <req_id> [<dnval=x1> ..]
                 host = host_port[0]
         app.run(host=host, port=port)
     else:
-        sign_request(db, req_id, *map(lambda x: x.split("=", 1), sys.argv[2:]))
+        sign_request(sqlite, req_id, *map(lambda x: x.split("=", 1), sys.argv[2:]))
