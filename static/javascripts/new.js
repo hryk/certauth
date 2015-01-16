@@ -1,4 +1,5 @@
-"use strict";
+'use strict';
+
 function rigNewForm(form) {
   var inp=form.querySelector("input[name=resource]");
   var uaRe=/(Android|Linux).*(Firefox|Chrome|Safari)/;
@@ -52,7 +53,6 @@ window.addEventListener("load", function() {
       rigNewForm(form);
     }
     console.log("req", this);
-    console.log("resp", this.response);
   }, false);
   xhr.send();
   ;
