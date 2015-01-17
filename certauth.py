@@ -42,8 +42,8 @@ def get_current_auth(db, req):
         cert_serial = struct.unpack(">I", ssl_serial)[0]
     except:
         return None
-    result = db.engine.execute("select uname,resource from user_certs where cert_serial=?",
-                               (cert_serial,))
+    result = db.engine.execute("""select uname,resource from user_certs
+                                where cert_serial=?""", (cert_serial,))
     row = result.fetchone()
     if row is None:
         raise KeyError("No cert with serial %r" % (cert_serial,))
@@ -54,14 +54,19 @@ def sign_request(db, req_id, *dn_args):
     from pyspkac.spkac import SPKAC
     from M2Crypto import X509, EVP
     exts = [
-        X509.new_extension('basicConstraints', 'CA:FALSE', critical=True),
-        X509.new_extension('keyUsage', 'digitalSignature, keyEncipherment', critical=True),
+        X509.new_extension('basicConstraints', 'CA:FALSE',
+                           critical=True),
+        X509.new_extension('keyUsage', 'digitalSignature, keyEncipherment',
+                           critical=True),
         X509.new_extension('extendedKeyUsage', 'clientAuth'),
     ]
     sql_existing = """
       select spkac,uname,resource,
-        (select uname from users where users.uname=requests.uname) as existing_user,
-        (select cert_serial from certs where certs.cert_serial=requests.cert_serial) as cert_serial
+        (select uname from users where users.uname=requests.uname)
+         as existing_user,
+        (select cert_serial from certs
+         where certs.cert_serial=requests.cert_serial)
+         as cert_serial
       from requests where req_id=?
     """
     cursor = db.cursor()
@@ -85,8 +90,8 @@ def sign_request(db, req_id, *dn_args):
                    (cert, cert_serial))
     if not have_user:
         cursor.execute("insert into users (uname) values (?)", (uname,))
-    cursor.execute("insert into user_certs (uname, resource, cert_serial) values (?,?,?)",
-                   (uname, resource, cert_serial))
+    cursor.execute("""insert into user_certs (uname, resource, cert_serial)
+                    values (?,?,?)""", (uname, resource, cert_serial))
     cursor.execute("update requests set cert_serial=? where req_id=?",
                    (cert_serial, req_id,))
     db.commit()
@@ -96,29 +101,30 @@ def sign_request(db, req_id, *dn_args):
 # Routes
 
 
-@app.route("/new", methods=["GET"])
+@app.route("/new", methods=["GET", "POST"])
 def new_cert():
-    return render_template('new.html')
-
-
-@app.route("/new", methods=["POST"])
-def new_key():
-    spkac = request.form["spkac"]
-    uname = request.form["uname"]
-    resource = request.form["resource"]
-    req_id = "".join(map(lambda x: "%02x" % random.randint(0, 255), range(4)))
-    req_info = dict(
-        headers=dict(request.headers),
-        remote_addr=request.environ["REMOTE_ADDR"],
-        remote_port=int(request.environ.get("REMOTE_PORT", -1)),
-        timestamp=time.time(),
-        remote_user=request.environ.get("REMOTE_USER")
-        )
-    db.engine.execute("insert into requests(req_id, spkac, uname, resource, request_info) values (?,?,?,?,?)",
-                      (req_id, spkac, uname, resource, to_json(req_info)))
-    response = make_response(redirect(url_for("new_cert")))
-    response.set_cookie("req_id", req_id)
-    return response
+    if request.method == 'POST':
+        spkac = request.form["spkac"]
+        uname = request.form["uname"]
+        resource = request.form["resource"]
+        req_id = "".join(map(lambda x: "%02x" % random.randint(0, 255),
+                             range(4)))
+        req_info = dict(
+            headers=dict(request.headers),
+            remote_addr=request.environ["REMOTE_ADDR"],
+            remote_port=int(request.environ.get("REMOTE_PORT", -1)),
+            timestamp=time.time(),
+            remote_user=request.environ.get("REMOTE_USER")
+            )
+        db.engine.execute("""insert into requests
+                              (req_id, spkac, uname, resource, request_info)
+                              values (?,?,?,?,?)""",
+                          (req_id, spkac, uname, resource, to_json(req_info)))
+        response = make_response(redirect(url_for("new_cert")))
+        response.set_cookie("req_id", req_id)
+        return response
+    else:
+        return render_template('new.html')
 
 
 @app.route("/req", methods=["GET"])
@@ -126,18 +132,23 @@ def get_requests():
     req_id = request.cookies.get("req_id")
     if not req_id:
         return to_json([])
-    result = db.engine.execute("select req_id,cert_serial is not null as have_cert,uname,resource,request_info from requests where req_id=?", (req_id,))
-    ret = map(lambda row: dict(zip(row.keys(), row), request_info=json.loads(row["request_info"])),
+    result = db.engine.execute("""select req_id,
+                                 cert_serial is not null as have_cert,
+                                 uname,resource,request_info
+                                from requests where req_id=?""", (req_id,))
+    ret = map(lambda row: dict(zip(row.keys(), row),
+                               request_info=json.loads(row["request_info"])),
               result.fetchall())
     response = make_response(to_json(ret))
-    response.headers['Content-Type'] = "application/json"
+    response.content_type = "application/json"
     return response
 
 
 @app.route("/cert/<req_id>", methods=["GET"])
 def get_cert(req_id):
-    result = db.engine.execute("select cert from certs where cert_serial=(select cert_serial from requests where req_id=?)",
-                               (req_id,))
+    result = db.engine.execute("""select cert from certs
+                                 where cert_serial=(select cert_serial from
+                                 requests where req_id=?)""", (req_id,))
     cert = result.fetchone()[0].rstrip()
     response = make_response(cert)
     response.content_type = "application/x-x509-user-cert"
@@ -160,8 +171,8 @@ def authenticate():
     auth_info = get_current_auth(db, request)
     if auth_info is None:
         abort(401)
-    return make_response(to_json(auth_info),
-                         content_type="application/json")
+    response = make_response(to_json(auth_info))
+    response.content_type = "application/json"
 
 
 if __name__ == '__main__':
@@ -176,10 +187,12 @@ Usage: %(arg0)s <req_id> [<dnval=x1> ..]
         cursor = sqlite.cursor()
         first = "Currently unsigned requests:"
         try:
-            cursor.execute("select req_id,uname,resource from requests where cert_serial is null")
+            cursor.execute("""select req_id,uname,resource
+                             from requests where cert_serial is null""")
         except Exception as e:
             print >>sys.stderr, "Database error:", e
-            print >>sys.stderr, "Possibly should initialize database with: sqlite3 %s < %s" % (DBNAME, os.path.join(my_dir, "db.sql")),
+            print >>sys.stderr, """Possibly should initialize database with: sqlite3 %s < %s""" % \
+                                (DBNAME, os.path.join(my_dir, "db.sql")),
             first = None
         req_id = None
         for (req_id, uname, resource) in cursor:
@@ -203,4 +216,6 @@ Usage: %(arg0)s <req_id> [<dnval=x1> ..]
                 host = host_port[0]
         app.run(host=host, port=port)
     else:
-        sign_request(sqlite, req_id, *map(lambda x: x.split("=", 1), sys.argv[2:]))
+        sign_request(sqlite,
+                     req_id,
+                     *map(lambda x: x.split("=", 1), sys.argv[2:]))
